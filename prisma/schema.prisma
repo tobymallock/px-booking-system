@@ -1,0 +1,384 @@
+// PX Group Booking System — Prisma schema
+// Source of truth for entities: PX-Booking-System-Plan-v3.1.docx (canonical plan)
+//
+// Phase 1 scope (this migration): User/RBAC, Brand, Instructor, Client,
+// Partner + CommissionRate, Season/PeakPeriod, PriceList/PriceTier.
+// Booking, Payment, Invoice, Rental entities are modelled now so later
+// phases don't require breaking schema changes, but their CRUD/UI lands
+// in Phases 2-4.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Auth / RBAC
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  ADMIN
+  OFFICE
+  INSTRUCTOR
+}
+
+// Mirrors a row in Supabase Auth (auth.users.id). We keep our own profile
+// table so we can attach role + brand scoping + link to an Instructor record.
+model User {
+  id          String     @id @default(uuid()) // matches Supabase auth.users.id
+  email       String     @unique
+  fullName    String
+  role        UserRole
+  instructor  Instructor? @relation(fields: [instructorId], references: [id])
+  instructorId String?   @unique
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  auditLogs   AuditLog[]
+
+  @@index([role])
+}
+
+// ---------------------------------------------------------------------------
+// Brand / Season
+// ---------------------------------------------------------------------------
+
+enum BrandCode {
+  PV // Performance Verbier
+  PX // Powder Extreme
+  VV // Vivid
+}
+
+model Brand {
+  id          String   @id @default(uuid())
+  code        BrandCode @unique
+  name        String
+  legalEntity String   @default("Powder Extreme Sarl")
+  // Vivid currently shares PV's price list (per v3.1 resolved open question)
+  pricesFromBrandId String?
+  pricesFromBrand   Brand?  @relation("BrandPriceSource", fields: [pricesFromBrandId], references: [id])
+  pricedBrands      Brand[] @relation("BrandPriceSource")
+
+  instructors Instructor[]
+  bookings    Booking[]
+  priceLists  PriceList[]
+  commissionRates CommissionRate[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Season {
+  id          String       @id @default(uuid())
+  label       String       // e.g. "2026/27"
+  startDate   DateTime
+  endDate     DateTime
+  peakPeriods PeakPeriod[]
+  priceLists  PriceList[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+// Date ranges within a season that trigger peak pricing (PV/VV pricing model)
+model PeakPeriod {
+  id        String   @id @default(uuid())
+  season    Season   @relation(fields: [seasonId], references: [id])
+  seasonId  String
+  label     String   // e.g. "Christmas", "February half-term"
+  startDate DateTime
+  endDate   DateTime
+
+  @@index([seasonId])
+}
+
+// ---------------------------------------------------------------------------
+// Pricing
+// ---------------------------------------------------------------------------
+
+enum PricingModel {
+  DURATION_PEAK_OFFPEAK   // PV / VV: duration x peak/off-peak
+  DURATION_GROUP_SIZE     // PX private: duration x group-size tier
+  FIXED_PRICE_PRODUCT     // PX Clinics / Camps: flat price per product
+}
+
+model PriceList {
+  id        String       @id @default(uuid())
+  brand     Brand        @relation(fields: [brandId], references: [id])
+  brandId   String
+  season    Season       @relation(fields: [seasonId], references: [id])
+  seasonId  String
+  model     PricingModel
+  tiers     PriceTier[]
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@index([brandId, seasonId])
+}
+
+// A single priced row, e.g. "3hr / off-peak / CHF 345" or
+// "Full day / 5+ people / CHF 695" or "Clinic 2-day / CHF 570"
+model PriceTier {
+  id          String     @id @default(uuid())
+  priceList   PriceList  @relation(fields: [priceListId], references: [id])
+  priceListId String
+  label       String     // human-readable, e.g. "3 hour private"
+  durationMin Int?       // minutes, null for fixed-price products
+  isPeak      Boolean?   // null when not applicable (group-size / fixed models)
+  groupMin    Int?       // group size tier lower bound (PX private)
+  groupMax    Int?       // group size tier upper bound, null = unbounded
+  priceChf    Decimal    @db.Decimal(10, 2)
+
+  @@index([priceListId])
+}
+
+// ---------------------------------------------------------------------------
+// People
+// ---------------------------------------------------------------------------
+
+model Instructor {
+  id            String     @id @default(uuid())
+  brand         Brand      @relation(fields: [brandId], references: [id])
+  brandId       String
+  firstName     String
+  lastName      String
+  mobile        String?
+  email         String?
+  isActive      Boolean    @default(true)
+  user          User?
+  bookingLineItems BookingLineItem[] @relation("AssignedInstructor")
+  requestedFor     BookingLineItem[] @relation("RequestedInstructor")
+  referredFrom     BookingLineItem[] @relation("ReferringInstructor")
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([brandId])
+  @@unique([firstName, lastName, brandId])
+}
+
+model Client {
+  id          String    @id @default(uuid())
+  firstName   String
+  lastName    String
+  email       String?
+  phone       String?
+  notes       String?
+  bookings    Booking[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([lastName, firstName])
+}
+
+// ---------------------------------------------------------------------------
+// Partners (Tour Operators / Hotels) + commission matrix
+// ---------------------------------------------------------------------------
+
+enum PartnerType {
+  TOUR_OPERATOR
+  HOTEL_CONCIERGE
+}
+
+enum InvoiceTerms {
+  PREPAY     // standard: invoiced/paid before or at time of lesson
+  POST_PAY   // e.g. Verbier Exclusive, The Lodge: invoiced after delivery
+}
+
+model Partner {
+  id              String           @id @default(uuid())
+  name            String
+  type            PartnerType
+  invoiceTerms    InvoiceTerms     @default(PREPAY)
+  dualInvoicing   Boolean          @default(false) // gross-to-client + net-to-partner
+  // Hotel concierge commission is tiered/cap-based, not a flat rate — modelled
+  // as free-form structured notes for Phase 1; Phase 4 adds a proper tier table.
+  hotelCommissionNotes String?
+  commissionRates CommissionRate[]
+  bookings        Booking[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([type])
+}
+
+// Per-partner, per-brand commission rate
+model CommissionRate {
+  id         String   @id @default(uuid())
+  partner    Partner  @relation(fields: [partnerId], references: [id])
+  partnerId  String
+  brand      Brand    @relation(fields: [brandId], references: [id])
+  brandId    String
+  ratePct    Decimal  @db.Decimal(5, 2) // e.g. 15.00 = 15%
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([partnerId, brandId])
+}
+
+// ---------------------------------------------------------------------------
+// Equipment & rental inventory (v3.1 addition)
+// ---------------------------------------------------------------------------
+
+model RentalItem {
+  id          String   @id @default(uuid())
+  name        String   // e.g. "Avalanche Safety Bag"
+  pricePerDay Decimal  @db.Decimal(10, 2)
+  totalUnits  Int
+  isActive    Boolean  @default(true)
+  lineItems   BookingRentalLineItem[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model BookingRentalLineItem {
+  id           String     @id @default(uuid())
+  booking      Booking    @relation(fields: [bookingId], references: [id])
+  bookingId    String
+  rentalItem   RentalItem @relation(fields: [rentalItemId], references: [id])
+  rentalItemId String
+  quantity     Int
+  days         Int
+  lineTotalChf Decimal    @db.Decimal(10, 2)
+
+  @@index([bookingId])
+  @@index([rentalItemId])
+}
+
+// ---------------------------------------------------------------------------
+// Bookings
+// ---------------------------------------------------------------------------
+
+enum BookingStatus {
+  TENTATIVE
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum BookingSource {
+  DIRECT
+  TOUR_OPERATOR
+  HOTEL_CONCIERGE
+}
+
+model Booking {
+  id          String         @id @default(uuid())
+  brand       Brand          @relation(fields: [brandId], references: [id])
+  brandId     String
+  client      Client         @relation(fields: [clientId], references: [id])
+  clientId    String
+  partner     Partner?       @relation(fields: [partnerId], references: [id])
+  partnerId   String?
+  source      BookingSource  @default(DIRECT)
+  status      BookingStatus  @default(TENTATIVE)
+  meetingPoint String?
+  notes       String?
+  discountPct Decimal?       @db.Decimal(5, 2) // office-applied discount; >10% requires admin approval per policy
+  lineItems   BookingLineItem[]
+  rentalLineItems BookingRentalLineItem[]
+  payments    Payment[]
+  invoices    Invoice[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([brandId])
+  @@index([clientId])
+  @@index([partnerId])
+}
+
+// A single lesson/product line within a booking. Captures the three
+// instructor-hour metrics tracked per v3.1 Section 10 (no payroll calc).
+model BookingLineItem {
+  id          String      @id @default(uuid())
+  booking     Booking     @relation(fields: [bookingId], references: [id])
+  bookingId   String
+  date        DateTime
+  startTime   DateTime?
+  durationMin Int?
+  description String      // e.g. "3hr private", "Clinic day 1"
+  priceChf    Decimal     @db.Decimal(10, 2)
+
+  assignedInstructor   Instructor? @relation("AssignedInstructor", fields: [assignedInstructorId], references: [id])
+  assignedInstructorId String?
+
+  // Client specifically requested this instructor (own client)
+  requestedInstructor   Instructor? @relation("RequestedInstructor", fields: [requestedInstructorId], references: [id])
+  requestedInstructorId String?
+
+  // Own client referred to a different instructor (referral bonus credit)
+  referringInstructor   Instructor? @relation("ReferringInstructor", fields: [referringInstructorId], references: [id])
+  referringInstructorId String?
+
+  instructorHours Decimal? @db.Decimal(5, 2)
+  requestHours    Decimal? @db.Decimal(5, 2)
+  referralHours   Decimal? @db.Decimal(5, 2)
+
+  @@index([bookingId])
+  @@index([assignedInstructorId])
+}
+
+// ---------------------------------------------------------------------------
+// Payments / Invoicing
+// ---------------------------------------------------------------------------
+
+enum PaymentMethod {
+  CARD_POS
+  CARD_EMAIL_LINK
+  BANK_TRANSFER
+  CASH
+  OTHER
+}
+
+// Split-payment ledger: multiple rows per booking, refunds as negative amounts
+model Payment {
+  id           String        @id @default(uuid())
+  booking      Booking       @relation(fields: [bookingId], references: [id])
+  bookingId    String
+  date         DateTime
+  method       PaymentMethod
+  amountChf    Decimal       @db.Decimal(10, 2) // negative = refund
+  reference    String?
+  createdAt    DateTime      @default(now())
+
+  @@index([bookingId])
+}
+
+enum InvoiceType {
+  CLIENT_GROSS
+  PARTNER_NET
+}
+
+model Invoice {
+  id          String      @id @default(uuid())
+  booking     Booking     @relation(fields: [bookingId], references: [id])
+  bookingId   String
+  number      String      @unique // e.g. "INV 26-005"
+  type        InvoiceType @default(CLIENT_GROSS)
+  issuedAt    DateTime    @default(now())
+  totalChf    Decimal     @db.Decimal(10, 2)
+  pdfUrl      String?
+  createdAt   DateTime    @default(now())
+
+  @@index([bookingId])
+}
+
+// ---------------------------------------------------------------------------
+// Audit trail
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  user      User?    @relation(fields: [userId], references: [id])
+  userId    String?
+  action    String   // e.g. "booking.update", "discount.approve"
+  entity    String   // e.g. "Booking"
+  entityId  String?
+  detail    Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([entity, entityId])
+}
