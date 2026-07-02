@@ -160,7 +160,7 @@ model Instructor {
   mobile        String?
   email         String?
   gender        Gender?
-  language      String?
+  languages     String[]
   disciplines   Discipline[]
   offPisteCert  Boolean      @default(false)
   brevet        Boolean      @default(false)

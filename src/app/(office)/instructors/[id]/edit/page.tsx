@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { updateInstructor } from "../../actions";
 import { notFound } from "next/navigation";
 import { Discipline } from "@prisma/client";
+import { LANGUAGES, DISCIPLINES } from "@/lib/constants";
 
 export default async function EditInstructorPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -39,25 +40,35 @@ export default async function EditInstructorPage({ params }: { params: Promise<{
         </select>
 
         <input name="mobile" defaultValue={instructor.mobile ?? ""} placeholder="Mobile" className="rounded border border-neutral-300 px-3 py-2 text-sm" />
-        <input name="language" defaultValue={instructor.language ?? ""} placeholder="Language(s) e.g. English, French" className="rounded border border-neutral-300 px-3 py-2 text-sm" />
+        <input name="email" type="email" defaultValue={instructor.email ?? ""} placeholder="Email" className="rounded border border-neutral-300 px-3 py-2 text-sm" />
 
-        <input name="email" type="email" defaultValue={instructor.email ?? ""} placeholder="Email" className="col-span-2 rounded border border-neutral-300 px-3 py-2 text-sm" />
+        <div className="col-span-2">
+          <p className="mb-2 text-xs font-medium text-neutral-600">Languages spoken</p>
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {LANGUAGES.map((l) => (
+              <label key={l.code} className="flex items-center gap-1.5 text-sm">
+                <input
+                  type="checkbox"
+                  name="languages"
+                  value={l.code}
+                  defaultChecked={instructor.languages.includes(l.code)}
+                />
+                {l.label}
+              </label>
+            ))}
+          </div>
+        </div>
 
         <div className="col-span-2">
           <p className="mb-2 text-xs font-medium text-neutral-600">Disciplines</p>
           <div className="flex flex-wrap gap-4">
-            {[
-              { value: "SKI" as Discipline, label: "Ski" },
-              { value: "SNOWBOARD" as Discipline, label: "Snowboard" },
-              { value: "TELEMARK" as Discipline, label: "Telemark" },
-              { value: "CROSS_COUNTRY" as Discipline, label: "Cross Country" },
-            ].map((d) => (
+            {DISCIPLINES.map((d) => (
               <label key={d.value} className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
                   name="disciplines"
                   value={d.value}
-                  defaultChecked={instructor.disciplines.includes(d.value)}
+                  defaultChecked={instructor.disciplines.includes(d.value as Discipline)}
                 />
                 {d.label}
               </label>

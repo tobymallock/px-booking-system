@@ -1,14 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { createInstructor, setInstructorActive, deleteInstructor } from "./actions";
 import { DeleteButton } from "@/components/DeleteButton";
+import { LANGUAGES, DISCIPLINES } from "@/lib/constants";
 import Link from "next/link";
-
-const DISCIPLINE_LABELS: Record<string, string> = {
-  SKI: "Ski",
-  SNOWBOARD: "Snowboard",
-  TELEMARK: "Telemark",
-  CROSS_COUNTRY: "XC",
-};
 
 export default async function InstructorsPage() {
   const [instructors, brands] = await Promise.all([
@@ -46,19 +40,24 @@ export default async function InstructorsPage() {
         </select>
 
         <input name="mobile" placeholder="Mobile" className="rounded border border-neutral-300 px-3 py-2 text-sm" />
-        <input name="language" placeholder="Language(s) e.g. English, French" className="rounded border border-neutral-300 px-3 py-2 text-sm" />
+        <input name="email" type="email" placeholder="Email" className="rounded border border-neutral-300 px-3 py-2 text-sm" />
 
-        <input name="email" type="email" placeholder="Email" className="col-span-2 rounded border border-neutral-300 px-3 py-2 text-sm" />
+        <div className="col-span-2">
+          <p className="mb-2 text-xs font-medium text-neutral-600">Languages spoken</p>
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {LANGUAGES.map((l) => (
+              <label key={l.code} className="flex items-center gap-1.5 text-sm">
+                <input type="checkbox" name="languages" value={l.code} />
+                {l.label}
+              </label>
+            ))}
+          </div>
+        </div>
 
         <div className="col-span-2">
           <p className="mb-2 text-xs font-medium text-neutral-600">Disciplines</p>
           <div className="flex flex-wrap gap-4">
-            {[
-              { value: "SKI", label: "Ski" },
-              { value: "SNOWBOARD", label: "Snowboard" },
-              { value: "TELEMARK", label: "Telemark" },
-              { value: "CROSS_COUNTRY", label: "Cross Country" },
-            ].map((d) => (
+            {DISCIPLINES.map((d) => (
               <label key={d.value} className="flex items-center gap-2 text-sm">
                 <input type="checkbox" name="disciplines" value={d.value} />
                 {d.label}
@@ -91,10 +90,9 @@ export default async function InstructorsPage() {
               <th className="py-2 pr-4">Brand</th>
               <th className="py-2 pr-4">Gender</th>
               <th className="py-2 pr-4">Disciplines</th>
-              <th className="py-2 pr-4">Language</th>
+              <th className="py-2 pr-4">Languages</th>
               <th className="py-2 pr-4">Off-piste</th>
               <th className="py-2 pr-4">Brevet</th>
-              <th className="py-2 pr-4">Mobile</th>
               <th className="py-2 pr-4">Status</th>
               <th className="py-2" />
             </tr>
@@ -105,27 +103,15 @@ export default async function InstructorsPage() {
                 <td className="py-2 pr-4 font-medium">{i.firstName} {i.lastName}</td>
                 <td className="py-2 pr-4">{i.brand.code}</td>
                 <td className="py-2 pr-4">{i.gender === "MALE" ? "M" : i.gender === "FEMALE" ? "F" : "—"}</td>
-                <td className="py-2 pr-4">
-                  {i.disciplines.length > 0
-                    ? i.disciplines.map((d) => DISCIPLINE_LABELS[d] ?? d).join(", ")
-                    : "—"}
-                </td>
-                <td className="py-2 pr-4">{i.language ?? "—"}</td>
+                <td className="py-2 pr-4">{i.disciplines.length > 0 ? i.disciplines.map((d) => d === "CROSS_COUNTRY" ? "XC" : d.charAt(0) + d.slice(1).toLowerCase()).join(", ") : "—"}</td>
+                <td className="py-2 pr-4">{i.languages.length > 0 ? i.languages.join(", ") : "—"}</td>
                 <td className="py-2 pr-4">{i.offPisteCert ? "✓" : "—"}</td>
                 <td className="py-2 pr-4">{i.brevet ? "✓" : "—"}</td>
-                <td className="py-2 pr-4">{i.mobile ?? "—"}</td>
                 <td className="py-2 pr-4">{i.isActive ? "Active" : "Inactive"}</td>
                 <td className="py-2">
                   <div className="flex items-center gap-3">
-                    <Link href={`/instructors/${i.id}/edit`} className="text-neutral-500 underline">
-                      Edit
-                    </Link>
-                    <form
-                      action={async () => {
-                        "use server";
-                        await setInstructorActive(i.id, !i.isActive);
-                      }}
-                    >
+                    <Link href={`/instructors/${i.id}/edit`} className="text-neutral-500 underline">Edit</Link>
+                    <form action={async () => { "use server"; await setInstructorActive(i.id, !i.isActive); }}>
                       <button type="submit" className="text-neutral-500 underline">
                         {i.isActive ? "Deactivate" : "Reactivate"}
                       </button>
