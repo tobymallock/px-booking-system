@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { createPartner, setCommissionRate } from "./actions";
+import { createPartner, setCommissionRate, deletePartner } from "./actions";
+import Link from "next/link";
 
 export default async function PartnersPage() {
   const [partners, brands] = await Promise.all([
@@ -48,6 +49,25 @@ export default async function PartnersPage() {
                   {p.invoiceTerms === "POST_PAY" ? "Post-pay" : "Pre-pay"}
                   {p.dualInvoicing ? " · Dual invoicing" : ""}
                 </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <Link href={`/partners/${p.id}/edit`} className="text-sm text-neutral-500 underline">
+                  Edit
+                </Link>
+                <form action={deletePartner}>
+                  <input type="hidden" name="id" value={p.id} />
+                  <button
+                    type="submit"
+                    className="text-sm text-red-400 underline"
+                    onClick={(e) => {
+                      if (!confirm(`Delete ${p.name}? This cannot be undone.`)) {
+                        e.preventDefault();
+                      }
+                    }}
+                  >
+                    Delete
+                  </button>
+                </form>
               </div>
             </div>
 

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { createInstructor, setInstructorActive } from "./actions";
+import { createInstructor, setInstructorActive, deleteInstructor } from "./actions";
+import Link from "next/link";
 
 const DISCIPLINE_LABELS: Record<string, string> = {
   SKI: "Ski",
@@ -33,9 +34,7 @@ export default async function InstructorsPage() {
         <select name="brandId" required className="rounded border border-neutral-300 px-3 py-2 text-sm">
           <option value="">Brand…</option>
           {brands.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name} ({b.code})
-            </option>
+            <option key={b.id} value={b.id}>{b.name} ({b.code})</option>
           ))}
         </select>
 
@@ -116,16 +115,35 @@ export default async function InstructorsPage() {
                 <td className="py-2 pr-4">{i.mobile ?? "—"}</td>
                 <td className="py-2 pr-4">{i.isActive ? "Active" : "Inactive"}</td>
                 <td className="py-2">
-                  <form
-                    action={async () => {
-                      "use server";
-                      await setInstructorActive(i.id, !i.isActive);
-                    }}
-                  >
-                    <button type="submit" className="text-neutral-500 underline">
-                      {i.isActive ? "Deactivate" : "Reactivate"}
-                    </button>
-                  </form>
+                  <div className="flex items-center gap-3">
+                    <Link href={`/instructors/${i.id}/edit`} className="text-neutral-500 underline">
+                      Edit
+                    </Link>
+                    <form
+                      action={async () => {
+                        "use server";
+                        await setInstructorActive(i.id, !i.isActive);
+                      }}
+                    >
+                      <button type="submit" className="text-neutral-500 underline">
+                        {i.isActive ? "Deactivate" : "Reactivate"}
+                      </button>
+                    </form>
+                    <form action={deleteInstructor}>
+                      <input type="hidden" name="id" value={i.id} />
+                      <button
+                        type="submit"
+                        className="text-red-400 underline"
+                        onClick={(e) => {
+                          if (!confirm(`Delete ${i.firstName} ${i.lastName}? This cannot be undone.`)) {
+                            e.preventDefault();
+                          }
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </form>
+                  </div>
                 </td>
               </tr>
             ))}

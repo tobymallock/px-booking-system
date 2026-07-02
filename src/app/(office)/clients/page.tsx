@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { createClientRecord } from "./actions";
+import { createClientRecord, deleteClient } from "./actions";
+import Link from "next/link";
 
 export default async function ClientsPage() {
   const clients = await prisma.client.findMany({
@@ -29,19 +30,39 @@ export default async function ClientsPage() {
       <table className="w-full max-w-3xl text-sm">
         <thead>
           <tr className="border-b border-neutral-200 text-left text-neutral-500">
-            <th className="py-2">Name</th>
-            <th className="py-2">Email</th>
-            <th className="py-2">Phone</th>
+            <th className="py-2 pr-4">Name</th>
+            <th className="py-2 pr-4">Email</th>
+            <th className="py-2 pr-4">Phone</th>
+            <th className="py-2" />
           </tr>
         </thead>
         <tbody>
           {clients.map((c) => (
             <tr key={c.id} className="border-b border-neutral-100">
+              <td className="py-2 pr-4">{c.firstName} {c.lastName}</td>
+              <td className="py-2 pr-4">{c.email ?? "—"}</td>
+              <td className="py-2 pr-4">{c.phone ?? "—"}</td>
               <td className="py-2">
-                {c.firstName} {c.lastName}
+                <div className="flex items-center gap-3">
+                  <Link href={`/clients/${c.id}/edit`} className="text-neutral-500 underline">
+                    Edit
+                  </Link>
+                  <form action={deleteClient}>
+                    <input type="hidden" name="id" value={c.id} />
+                    <button
+                      type="submit"
+                      className="text-red-400 underline"
+                      onClick={(e) => {
+                        if (!confirm(`Delete ${c.firstName} ${c.lastName}? This cannot be undone.`)) {
+                          e.preventDefault();
+                        }
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </form>
+                </div>
               </td>
-              <td className="py-2">{c.email ?? "—"}</td>
-              <td className="py-2">{c.phone ?? "—"}</td>
             </tr>
           ))}
         </tbody>
