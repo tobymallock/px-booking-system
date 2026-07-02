@@ -3,12 +3,69 @@ import { createInstructor, setInstructorActive, deleteInstructor } from "./actio
 import { DeleteButton } from "@/components/DeleteButton";
 import { LANGUAGES, DISCIPLINES } from "@/lib/constants";
 import Link from "next/link";
+import type { Prisma } from "@prisma/client";
 
-export default async function InstructorsPage() {
+type SortDir = "asc" | "desc";
+
+function buildOrderBy(sort: string, dir: SortDir): Prisma.InstructorOrderByWithRelationInput[] {
+  switch (sort) {
+    case "firstName":
+      return [{ firstName: dir }, { lastName: "asc" }];
+    case "brand":
+      return [{ brand: { code: dir } }, { lastName: "asc" }];
+    case "gender":
+      return [{ gender: dir }, { lastName: "asc" }];
+    case "offPisteCert":
+      return [{ offPisteCert: dir }, { lastName: "asc" }];
+    case "brevet":
+      return [{ brevet: dir }, { lastName: "asc" }];
+    case "isActive":
+      return [{ isActive: dir }, { lastName: "asc" }];
+    default: // "lastName"
+      return [{ lastName: dir }, { firstName: "asc" }];
+  }
+}
+
+function SortHeader({
+  label,
+  column,
+  sort,
+  dir,
+  className = "",
+}: {
+  label: string;
+  column: string;
+  sort: string;
+  dir: SortDir;
+  className?: string;
+}) {
+  const active = sort === column;
+  const nextDir = active && dir === "asc" ? "desc" : "asc";
+  return (
+    <a
+      href={`?sort=${column}&dir=${nextDir}`}
+      className={`inline-flex items-center gap-1 whitespace-nowrap hover:text-neutral-900 ${active ? "text-neutral-900" : ""} ${className}`}
+    >
+      {label}
+      <span className="text-[10px]">
+        {active ? (dir === "asc" ? "▲" : "▼") : <span className="opacity-30">▲</span>}
+      </span>
+    </a>
+  );
+}
+
+export default async function InstructorsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ sort?: string; dir?: string }>;
+}) {
+  const { sort = "lastName", dir: rawDir = "asc" } = await searchParams;
+  const dir: SortDir = rawDir === "desc" ? "desc" : "asc";
+
   const [instructors, brands] = await Promise.all([
     prisma.instructor.findMany({
       include: { brand: true },
-      orderBy: [{ brand: { code: "asc" } }, { lastName: "asc" }],
+      orderBy: buildOrderBy(sort, dir),
     }),
     prisma.brand.findMany({ orderBy: { code: "asc" } }),
   ]);
@@ -86,14 +143,26 @@ export default async function InstructorsPage() {
         <table className="w-full max-w-5xl text-sm">
           <thead>
             <tr className="border-b border-neutral-200 text-left text-neutral-500">
-              <th className="py-2 pr-4">Name</th>
-              <th className="py-2 pr-4">Brand</th>
-              <th className="py-2 pr-4">Gender</th>
-              <th className="py-2 pr-4">Disciplines</th>
-              <th className="py-2 pr-4">Languages</th>
-              <th className="py-2 pr-4">Off-piste</th>
-              <th className="py-2 pr-4">Brevet</th>
-              <th className="py-2 pr-4">Status</th>
+              <th className="py-2 pr-4 font-medium">
+                <SortHeader label="Name" column="lastName" sort={sort} dir={dir} />
+              </th>
+              <th className="py-2 pr-4 font-medium">
+                <SortHeader label="Brand" column="brand" sort={sort} dir={dir} />
+              </th>
+              <th className="py-2 pr-4 font-medium">
+                <SortHeader label="Gender" column="gender" sort={sort} dir={dir} />
+              </th>
+              <th className="py-2 pr-4 font-medium">Disciplines</th>
+              <th className="py-2 pr-4 font-medium">Languages</th>
+              <th className="py-2 pr-4 font-medium">
+                <SortHeader label="Off-piste" column="offPisteCert" sort={sort} dir={dir} />
+              </th>
+              <th className="py-2 pr-4 font-medium">
+                <SortHeader label="Brevet" column="brevet" sort={sort} dir={dir} />
+              </th>
+              <th className="py-2 pr-4 font-medium">
+                <SortHeader label="Status" column="isActive" sort={sort} dir={dir} />
+              </th>
               <th className="py-2" />
             </tr>
           </thead>
