@@ -54,6 +54,18 @@ enum BrandCode {
   VV // Vivid
 }
 
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum Discipline {
+  SKI
+  SNOWBOARD
+  TELEMARK
+  CROSS_COUNTRY
+}
+
 model Brand {
   id          String   @id @default(uuid())
   code        BrandCode @unique
@@ -140,14 +152,19 @@ model PriceTier {
 // ---------------------------------------------------------------------------
 
 model Instructor {
-  id            String     @id @default(uuid())
-  brand         Brand      @relation(fields: [brandId], references: [id])
+  id            String       @id @default(uuid())
+  brand         Brand        @relation(fields: [brandId], references: [id])
   brandId       String
   firstName     String
   lastName      String
   mobile        String?
   email         String?
-  isActive      Boolean    @default(true)
+  gender        Gender?
+  language      String?
+  disciplines   Discipline[]
+  offPisteCert  Boolean      @default(false)
+  brevet        Boolean      @default(false)
+  isActive      Boolean      @default(true)
   user          User?
   bookingLineItems BookingLineItem[] @relation("AssignedInstructor")
   requestedFor     BookingLineItem[] @relation("RequestedInstructor")
