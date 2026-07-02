@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { createInstructor, setInstructorActive, deleteInstructor } from "./actions";
+import { DeleteButton } from "@/components/DeleteButton";
 import Link from "next/link";
 
 const DISCIPLINE_LABELS: Record<string, string> = {
@@ -129,20 +130,12 @@ export default async function InstructorsPage() {
                         {i.isActive ? "Deactivate" : "Reactivate"}
                       </button>
                     </form>
-                    <form action={deleteInstructor}>
-                      <input type="hidden" name="id" value={i.id} />
-                      <button
-                        type="submit"
-                        className="text-red-400 underline"
-                        onClick={(e) => {
-                          if (!confirm(`Delete ${i.firstName} ${i.lastName}? This cannot be undone.`)) {
-                            e.preventDefault();
-                          }
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </form>
+                    <DeleteButton
+                      action={deleteInstructor}
+                      id={i.id}
+                      confirmMessage={`Delete ${i.firstName} ${i.lastName}? This cannot be undone.`}
+                      className="text-red-400 underline"
+                    />
                   </div>
                 </td>
               </tr>

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { createClientRecord, deleteClient } from "./actions";
+import { DeleteButton } from "@/components/DeleteButton";
 import Link from "next/link";
 
 export default async function ClientsPage() {
@@ -47,20 +48,12 @@ export default async function ClientsPage() {
                   <Link href={`/clients/${c.id}/edit`} className="text-neutral-500 underline">
                     Edit
                   </Link>
-                  <form action={deleteClient}>
-                    <input type="hidden" name="id" value={c.id} />
-                    <button
-                      type="submit"
-                      className="text-red-400 underline"
-                      onClick={(e) => {
-                        if (!confirm(`Delete ${c.firstName} ${c.lastName}? This cannot be undone.`)) {
-                          e.preventDefault();
-                        }
-                      }}
-                    >
-                      Delete
-                    </button>
-                  </form>
+                  <DeleteButton
+                    action={deleteClient}
+                    id={c.id}
+                    confirmMessage={`Delete ${c.firstName} ${c.lastName}? This cannot be undone.`}
+                    className="text-red-400 underline"
+                  />
                 </div>
               </td>
             </tr>
