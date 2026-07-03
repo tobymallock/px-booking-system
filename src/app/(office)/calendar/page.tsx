@@ -9,13 +9,6 @@ const PALETTE = [
   "#22C55E", "#EAB308", "#64748B", "#7C3AED", "#DC2626",
 ];
 
-// Brand accent colours (sidebar left border)
-export const BRAND_COLORS: Record<string, string> = {
-  PV: "#3B82F6", // blue
-  PX: "#10B981", // emerald
-  VV: "#8B5CF6", // violet
-};
-
 export default async function CalendarPage() {
   const [lineItems, instructors] = await Promise.all([
     prisma.bookingLineItem.findMany({
