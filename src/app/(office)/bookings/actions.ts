@@ -133,6 +133,7 @@ export async function createLineItem(formData: FormData) {
     },
   });
   revalidatePath(`/bookings/${data.bookingId}`);
+  revalidatePath("/calendar");
 }
 
 export async function updateLineItem(formData: FormData) {
@@ -150,6 +151,7 @@ export async function updateLineItem(formData: FormData) {
       assignedInstructorId: data.assignedInstructorId ?? null,
     },
   });
+  revalidatePath("/calendar");
   redirect(`/bookings/${data.bookingId}`);
 }
 
