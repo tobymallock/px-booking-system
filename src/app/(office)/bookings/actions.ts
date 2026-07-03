@@ -155,6 +155,24 @@ export async function updateLineItem(formData: FormData) {
   redirect(`/bookings/${data.bookingId}`);
 }
 
+// Called from calendar drag & drop — takes typed args, not FormData
+export async function moveLineItem(
+  id: string,
+  instructorId: string | null,
+  date: string
+) {
+  const newDate = new Date(`${date}T00:00:00Z`);
+  await prisma.bookingLineItem.update({
+    where: { id },
+    data: {
+      date: newDate,
+      assignedInstructorId: instructorId ?? null,
+    },
+  });
+  revalidatePath("/calendar");
+  revalidatePath("/bookings");
+}
+
 export async function deleteLineItem(formData: FormData) {
   const id = formData.get("id") as string;
   // Look up bookingId so the caller doesn't need to pass it

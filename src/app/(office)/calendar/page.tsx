@@ -1,29 +1,23 @@
 import { prisma } from "@/lib/prisma";
-import { CalendarView } from "./CalendarView";
+import { ScheduleView } from "./ScheduleView";
 
-// 15-colour palette for instructors (deterministic by index)
+// 20-colour palette — deterministic by instructor sort order
 const PALETTE = [
-  "#3B82F6", // blue
-  "#10B981", // emerald
-  "#F59E0B", // amber
-  "#EF4444", // red
-  "#8B5CF6", // violet
-  "#EC4899", // pink
-  "#06B6D4", // cyan
-  "#84CC16", // lime
-  "#F97316", // orange
-  "#6366F1", // indigo
-  "#14B8A6", // teal
-  "#D946EF", // fuchsia
-  "#64748B", // slate
-  "#DC2626", // red-600
-  "#7C3AED", // violet-600
+  "#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6",
+  "#EC4899", "#06B6D4", "#84CC16", "#F97316", "#6366F1",
+  "#14B8A6", "#D946EF", "#0EA5E9", "#A855F7", "#F43F5E",
+  "#22C55E", "#EAB308", "#64748B", "#7C3AED", "#DC2626",
 ];
 
-const UNASSIGNED_COLOR = "#CBD5E1"; // slate-300
+// Brand accent colours (sidebar left border)
+export const BRAND_COLORS: Record<string, string> = {
+  PV: "#3B82F6", // blue
+  PX: "#10B981", // emerald
+  VV: "#8B5CF6", // violet
+};
 
 export default async function CalendarPage() {
-  const [lineItems, bookings, instructors] = await Promise.all([
+  const [lineItems, instructors] = await Promise.all([
     prisma.bookingLineItem.findMany({
       include: {
         booking: {
@@ -33,78 +27,51 @@ export default async function CalendarPage() {
       },
       orderBy: { date: "asc" },
     }),
-    prisma.booking.findMany({
-      include: { client: true, brand: true },
-      orderBy: [{ createdAt: "desc" }],
-      where: { status: { not: "CANCELLED" } },
-    }),
     prisma.instructor.findMany({
       where: { isActive: true },
-      orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+      include: { brand: true },
+      orderBy: [{ brand: { code: "asc" } }, { lastName: "asc" }, { firstName: "asc" }],
     }),
   ]);
 
-  // Assign stable colors to instructors by index
+  // Assign stable colours by sorted order
   const instructorColors: Record<string, string> = {};
   instructors.forEach((inst, i) => {
     instructorColors[inst.id] = PALETTE[i % PALETTE.length];
   });
 
-  const events = lineItems.map((li) => {
-    const clientLast = li.booking.client.lastName;
-    const instrFirst = li.assignedInstructor?.firstName ?? "TBC";
-    const color = li.assignedInstructorId
-      ? (instructorColors[li.assignedInstructorId] ?? UNASSIGNED_COLOR)
-      : UNASSIGNED_COLOR;
-
-    // Build ISO date string (date is stored as UTC midnight)
-    const dateStr = li.date.toISOString().split("T")[0];
-
-    return {
-      id: li.id,
-      title: `${clientLast} · ${instrFirst}`,
-      start: dateStr,
-      color,
-      extendedProps: {
-        bookingId: li.bookingId,
-        clientName: `${li.booking.client.firstName} ${li.booking.client.lastName}`,
-        brandCode: li.booking.brand.code,
-        instructorName: li.assignedInstructor
-          ? `${li.assignedInstructor.firstName} ${li.assignedInstructor.lastName}`
-          : null,
-        instructorId: li.assignedInstructorId ?? null,
-        description: li.description,
-        startTime: li.startTime ? li.startTime.toISOString() : null,
-        durationMin: li.durationMin ?? null,
-        priceChf: Number(li.priceChf),
-      },
-    };
-  });
-
-  const bookingOptions = bookings.map((b) => ({
-    id: b.id,
-    label: `${b.client.lastName}, ${b.client.firstName} (${b.brand.code})`,
-    brandId: b.brandId,
+  const lessons = lineItems.map((li) => ({
+    id: li.id,
+    date: li.date.toISOString().split("T")[0],
+    startTime: li.startTime
+      ? `${li.startTime.getUTCHours().toString().padStart(2, "0")}:${li.startTime.getUTCMinutes().toString().padStart(2, "0")}`
+      : null,
+    durationMin: li.durationMin ?? null,
+    description: li.description,
+    priceChf: Number(li.priceChf),
+    bookingId: li.bookingId,
+    clientName: `${li.booking.client.firstName} ${li.booking.client.lastName}`,
+    clientLastName: li.booking.client.lastName,
+    brandCode: li.booking.brand.code,
+    instructorId: li.assignedInstructorId ?? null,
+    instructorColor: li.assignedInstructorId
+      ? (instructorColors[li.assignedInstructorId] ?? "#94A3B8")
+      : "#94A3B8",
   }));
 
-  const instructorOptions = instructors.map((inst, i) => ({
+  const instructorRows = instructors.map((inst, i) => ({
     id: inst.id,
     firstName: inst.firstName,
     lastName: inst.lastName,
+    brandCode: inst.brand.code,
     brandId: inst.brandId,
     color: PALETTE[i % PALETTE.length],
   }));
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Calendar</h1>
-      </div>
-      <CalendarView
-        events={events}
-        bookings={bookingOptions}
-        instructors={instructorOptions}
-      />
+      <h1 className="text-xl font-semibold">Schedule</h1>
+      <ScheduleView lessons={lessons} instructors={instructorRows} />
     </div>
   );
 }
