@@ -1,16 +1,16 @@
 "use client";
 
-import React, { useState, useTransition, useCallback } from "react";
+import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { moveLineItem } from "../bookings/actions";
+import { moveLineItem, createLineItem } from "../bookings/actions";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface Lesson {
   id: string;
-  date: string; // YYYY-MM-DD
-  startTime: string | null; // HH:MM
+  date: string;
+  startTime: string | null;
   durationMin: number | null;
   description: string;
   priceChf: number;
@@ -34,7 +34,19 @@ export interface InstructorRow {
 interface Props {
   lessons: Lesson[];
   instructors: InstructorRow[];
+  bookings: BookingOption[];
 }
+
+interface BookingOption {
+  id: string;
+  label: string; // "Smith, John (PV)"
+  brandId: string;
+}
+
+type Panel =
+  | { type: "add"; date: string; instructorId: string | null }
+  | { type: "view"; lesson: Lesson }
+  | null;
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -44,12 +56,24 @@ const BRAND_COLORS: Record<string, string> = {
   VV: "#8B5CF6",
 };
 
+const DURATIONS = [
+  { value: "90", label: "1.5hr" },
+  { value: "120", label: "2hr" },
+  { value: "150", label: "2.5hr" },
+  { value: "180", label: "3hr" },
+  { value: "210", label: "3.5hr" },
+  { value: "240", label: "4hr" },
+  { value: "270", label: "4.5hr" },
+  { value: "300", label: "5hr" },
+  { value: "360", label: "6hr (full day)" },
+];
+
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 // ── Date helpers ───────────────────────────────────────────────────────────────
 
 function getMonday(d: Date): Date {
-  const day = d.getUTCDay(); // 0=Sun,1=Mon…6=Sat
+  const day = d.getUTCDay();
   const diff = day === 0 ? -6 : 1 - day;
   const mon = new Date(d);
   mon.setUTCDate(d.getUTCDate() + diff);
@@ -57,20 +81,24 @@ function getMonday(d: Date): Date {
 }
 
 function addDays(d: Date, n: number): Date {
-  const result = new Date(d);
-  result.setUTCDate(d.getUTCDate() + n);
-  return result;
+  const r = new Date(d);
+  r.setUTCDate(d.getUTCDate() + n);
+  return r;
 }
 
 function toDateStr(d: Date): string {
   return d.toISOString().split("T")[0];
 }
 
-function formatColHeader(d: Date): { day: string; date: string; isToday: boolean } {
+function formatColHeader(d: Date) {
   const today = toDateStr(new Date());
   return {
     day: DAYS[d.getUTCDay() === 0 ? 6 : d.getUTCDay() - 1],
-    date: d.toLocaleDateString("en-GB", { timeZone: "UTC", day: "numeric", month: "short" }),
+    date: d.toLocaleDateString("en-GB", {
+      timeZone: "UTC",
+      day: "numeric",
+      month: "short",
+    }),
     isToday: toDateStr(d) === today,
   };
 }
@@ -81,9 +109,7 @@ function formatDuration(min: number): string {
   return `${Math.floor(min / 60)}h${min % 60}`;
 }
 
-// ── Initials ───────────────────────────────────────────────────────────────────
-
-function initials(first: string, last: string): string {
+function initials(first: string, last: string) {
   return `${first[0] ?? ""}${last[0] ?? ""}`.toUpperCase();
 }
 
@@ -91,35 +117,28 @@ function initials(first: string, last: string): string {
 
 function LessonBlock({
   lesson,
-  isDragging,
   onDragStart,
   onClick,
 }: {
   lesson: Lesson;
-  isDragging: boolean;
-  onDragStart: () => void;
-  onClick: () => void;
+  onDragStart: (e: React.DragEvent) => void;
+  onClick: (e: React.MouseEvent) => void;
 }) {
   return (
     <div
       draggable
-      onDragStart={(e) => {
-        e.dataTransfer.effectAllowed = "move";
-        onDragStart();
-      }}
+      onDragStart={onDragStart}
       onClick={onClick}
-      className="mb-1 cursor-grab rounded px-2 py-1 text-xs text-white shadow-sm select-none active:cursor-grabbing"
-      style={{
-        backgroundColor: lesson.instructorColor,
-        opacity: isDragging ? 0.4 : 1,
-      }}
+      className="mb-1 cursor-grab rounded px-2 py-1.5 text-xs text-white shadow-sm select-none active:cursor-grabbing hover:brightness-110 transition-all"
+      style={{ backgroundColor: lesson.instructorColor }}
     >
-      <div className="font-medium truncate">
-        {lesson.startTime ? `${lesson.startTime} · ` : ""}
+      <div className="font-semibold truncate leading-tight">
         {lesson.clientLastName}
       </div>
-      <div className="truncate opacity-80">
-        {lesson.durationMin ? formatDuration(lesson.durationMin) : lesson.description}
+      <div className="opacity-80 truncate leading-tight">
+        {lesson.startTime ? `${lesson.startTime}` : ""}
+        {lesson.startTime && lesson.durationMin ? " · " : ""}
+        {lesson.durationMin ? formatDuration(lesson.durationMin) : ""}
       </div>
     </div>
   );
@@ -127,42 +146,33 @@ function LessonBlock({
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export function ScheduleView({ lessons, instructors }: Props) {
+export function ScheduleView({ lessons, instructors, bookings }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
-  // Week navigation (client-side — all data loaded upfront)
   const [weekStart, setWeekStart] = useState(() => getMonday(new Date()));
-
-  // Brand filters
   const [visibleBrands, setVisibleBrands] = useState<Set<string>>(
     new Set(["PV", "PX", "VV"])
   );
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [panel, setPanel] = useState<Panel>(null);
 
-  // Drag state
-  const [draggedId, setDraggedId] = useState<string | null>(null);
-  const [dropTarget, setDropTarget] = useState<string | null>(null); // "instructorId|date" or "unassigned|date"
+  // For the add-lesson form
+  const [addBookingId, setAddBookingId] = useState("");
 
-  // Side panel
-  const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
-
-  // Week days
   const weekDays = Array.from({ length: 14 }, (_, i) => addDays(weekStart, i));
   const weekDayStrs = weekDays.map(toDateStr);
 
-  // Filter instructors by brand
   const visibleInstructors = instructors.filter((i) =>
     visibleBrands.has(i.brandCode)
   );
 
-  // Build lookup: [instructorId][date] → lessons[]
+  // Build lesson lookup
   const byInstructor: Record<string, Record<string, Lesson[]>> = {};
   const unassignedByDate: Record<string, Lesson[]> = {};
 
   for (const lesson of lessons) {
-    // Only include lessons for visible brands (booking brand)
     if (!visibleBrands.has(lesson.brandCode)) continue;
-
     if (lesson.instructorId) {
       if (!byInstructor[lesson.instructorId])
         byInstructor[lesson.instructorId] = {};
@@ -175,42 +185,73 @@ export function ScheduleView({ lessons, instructors }: Props) {
     }
   }
 
-  // Drop handler
-  const handleDrop = useCallback(
-    (instructorId: string | null, date: string) => {
-      if (!draggedId) return;
-      const lesson = lessons.find((l) => l.id === draggedId);
-      if (!lesson) return;
-      if (lesson.instructorId === instructorId && lesson.date === date) {
-        setDraggedId(null);
-        setDropTarget(null);
-        return;
-      }
-      startTransition(async () => {
-        await moveLineItem(draggedId, instructorId, date);
-        router.refresh();
-      });
-      setDraggedId(null);
-      setDropTarget(null);
-    },
-    [draggedId, lessons, router, startTransition]
-  );
+  // ── Drag handlers ────────────────────────────────────────────────────────────
+  // Use dataTransfer to carry the lesson ID — more reliable than React state
+
+  function handleDragStart(e: React.DragEvent, lessonId: string) {
+    e.dataTransfer.setData("text/plain", lessonId);
+    e.dataTransfer.effectAllowed = "move";
+  }
+
+  function handleDragOver(e: React.DragEvent, cellKey: string) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDropTarget(cellKey);
+  }
+
+  function handleDrop(
+    e: React.DragEvent,
+    instructorId: string | null,
+    date: string
+  ) {
+    e.preventDefault();
+    const lessonId = e.dataTransfer.getData("text/plain");
+    setDropTarget(null);
+    if (!lessonId) return;
+
+    const lesson = lessons.find((l) => l.id === lessonId);
+    if (!lesson) return;
+    if (lesson.instructorId === instructorId && lesson.date === date) return;
+
+    startTransition(async () => {
+      await moveLineItem(lessonId, instructorId, date);
+      router.refresh();
+    });
+  }
+
+  // ── Cell click (add lesson) ──────────────────────────────────────────────────
+
+  function handleCellClick(instructorId: string | null, date: string) {
+    setAddBookingId("");
+    setPanel({ type: "add", date, instructorId });
+  }
+
+  // ── Add lesson submit ────────────────────────────────────────────────────────
+
+  function handleAddLesson(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    startTransition(async () => {
+      await createLineItem(formData);
+      setPanel(null);
+      setAddBookingId("");
+      router.refresh();
+    });
+  }
+
+  // ── Brand toggles ────────────────────────────────────────────────────────────
 
   function toggleBrand(code: string) {
     setVisibleBrands((prev) => {
       const next = new Set(prev);
       if (next.has(code)) {
-        if (next.size === 1) return next; // keep at least one
+        if (next.size === 1) return next;
         next.delete(code);
       } else {
         next.add(code);
       }
       return next;
     });
-  }
-
-  function goToToday() {
-    setWeekStart(getMonday(new Date()));
   }
 
   const weekLabel = `${weekDays[0].toLocaleDateString("en-GB", {
@@ -224,30 +265,40 @@ export function ScheduleView({ lessons, instructors }: Props) {
     year: "numeric",
   })}`;
 
+  // Instructors filtered to the selected booking's brand (for add panel)
+  const selectedBooking = bookings.find((b) => b.id === addBookingId);
+  const panelInstructors =
+    addBookingId && selectedBooking
+      ? instructors.filter((i) => i.brandId === selectedBooking.brandId)
+      : instructors;
+
+  // Pre-select the instructor from the row that was clicked
+  const panelDefaultInstructor =
+    panel?.type === "add" ? (panel.instructorId ?? "") : "";
+
   return (
     <div className="flex flex-col gap-3">
-      {/* ── Controls bar ──────────────────────────────────────────── */}
+      {/* ── Controls ──────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-3">
-        {/* Week navigation */}
         <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={() => setWeekStart((w) => addDays(w, -14))}
-            className="rounded border border-neutral-200 px-2.5 py-1 text-sm text-neutral-600 hover:bg-neutral-50"
+            className="rounded border border-neutral-200 px-2.5 py-1 text-sm hover:bg-neutral-50"
           >
             ‹
           </button>
           <button
             type="button"
             onClick={() => setWeekStart((w) => addDays(w, 14))}
-            className="rounded border border-neutral-200 px-2.5 py-1 text-sm text-neutral-600 hover:bg-neutral-50"
+            className="rounded border border-neutral-200 px-2.5 py-1 text-sm hover:bg-neutral-50"
           >
             ›
           </button>
           <button
             type="button"
-            onClick={goToToday}
-            className="rounded border border-neutral-200 px-3 py-1 text-sm text-neutral-600 hover:bg-neutral-50"
+            onClick={() => setWeekStart(getMonday(new Date()))}
+            className="rounded border border-neutral-200 px-3 py-1 text-sm hover:bg-neutral-50"
           >
             Today
           </button>
@@ -256,13 +307,12 @@ export function ScheduleView({ lessons, instructors }: Props) {
         <span className="text-sm font-medium text-neutral-700">{weekLabel}</span>
 
         <div className="ml-auto flex items-center gap-2">
-          {/* Brand toggles */}
           {(["PV", "PX", "VV"] as const).map((code) => (
             <button
               key={code}
               type="button"
               onClick={() => toggleBrand(code)}
-              className="rounded-full px-3 py-0.5 text-xs font-semibold transition-opacity"
+              className="rounded-full px-3 py-0.5 text-xs font-semibold transition-all"
               style={{
                 backgroundColor: visibleBrands.has(code)
                   ? BRAND_COLORS[code]
@@ -276,23 +326,23 @@ export function ScheduleView({ lessons, instructors }: Props) {
         </div>
 
         {isPending && (
-          <span className="text-xs text-neutral-400">Saving…</span>
+          <span className="text-xs text-neutral-400 animate-pulse">
+            Saving…
+          </span>
         )}
       </div>
 
-      {/* ── Schedule grid ─────────────────────────────────────────── */}
+      {/* ── Grid ──────────────────────────────────────────────────── */}
       <div className="overflow-auto rounded-lg border border-neutral-200 bg-white">
         <div
           className="grid"
           style={{
-            gridTemplateColumns: `200px repeat(14, minmax(110px, 1fr))`,
-            minWidth: "200px",
+            gridTemplateColumns: `200px repeat(14, minmax(100px, 1fr))`,
           }}
         >
-          {/* ── Header row ── */}
-          {/* Corner cell */}
+          {/* Header corner */}
           <div className="sticky left-0 top-0 z-30 border-b border-r border-neutral-200 bg-neutral-50 px-3 py-2">
-            <span className="text-xs font-medium text-neutral-400">
+            <span className="text-xs text-neutral-400">
               {visibleInstructors.length} instructors
             </span>
           </div>
@@ -319,7 +369,7 @@ export function ScheduleView({ lessons, instructors }: Props) {
             );
           })}
 
-          {/* ── Unassigned row ── */}
+          {/* Unassigned row */}
           <div className="sticky left-0 z-10 flex items-center gap-2 border-b border-r border-neutral-100 bg-white px-3 py-2">
             <span
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
@@ -327,10 +377,8 @@ export function ScheduleView({ lessons, instructors }: Props) {
             >
               ?
             </span>
-            <div className="min-w-0">
-              <div className="truncate text-xs font-medium text-neutral-700">
-                Unassigned
-              </div>
+            <div className="text-xs font-medium text-neutral-500">
+              Unassigned
             </div>
           </div>
 
@@ -341,37 +389,40 @@ export function ScheduleView({ lessons, instructors }: Props) {
             return (
               <div
                 key={dateStr}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDropTarget(cellKey);
-                }}
+                onDragOver={(e) => handleDragOver(e, cellKey)}
                 onDragLeave={() => setDropTarget(null)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  handleDrop(null, dateStr);
-                }}
-                className={`border-b border-r border-neutral-100 p-1 transition-colors ${
-                  isOver ? "bg-slate-100" : ""
+                onDrop={(e) => handleDrop(e, null, dateStr)}
+                onClick={() => handleCellClick(null, dateStr)}
+                className={`group border-b border-r border-neutral-100 p-1 transition-colors cursor-pointer ${
+                  isOver
+                    ? "bg-slate-100 ring-2 ring-inset ring-slate-300"
+                    : "hover:bg-neutral-50"
                 }`}
-                style={{ minHeight: "52px" }}
+                style={{ minHeight: "56px" }}
               >
                 {cellLessons.map((lesson) => (
                   <LessonBlock
                     key={lesson.id}
                     lesson={lesson}
-                    isDragging={draggedId === lesson.id}
-                    onDragStart={() => setDraggedId(lesson.id)}
-                    onClick={() => setSelectedLesson(lesson)}
+                    onDragStart={(e) => handleDragStart(e, lesson.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPanel({ type: "view", lesson });
+                    }}
                   />
                 ))}
+                {cellLessons.length === 0 && (
+                  <div className="hidden group-hover:flex h-full items-center justify-center text-neutral-300 text-xs">
+                    + lesson
+                  </div>
+                )}
               </div>
             );
           })}
 
-          {/* ── Instructor rows ── */}
+          {/* Instructor rows */}
           {visibleInstructors.map((inst) => (
             <React.Fragment key={inst.id}>
-              {/* Instructor name cell */}
               <div
                 className="sticky left-0 z-10 flex items-center gap-2 border-b border-r border-neutral-100 bg-white px-3 py-2"
                 style={{
@@ -392,7 +443,6 @@ export function ScheduleView({ lessons, instructors }: Props) {
                 </div>
               </div>
 
-              {/* Day cells */}
               {weekDayStrs.map((dateStr) => {
                 const cellKey = `${inst.id}|${dateStr}`;
                 const isOver = dropTarget === cellKey;
@@ -401,29 +451,33 @@ export function ScheduleView({ lessons, instructors }: Props) {
                 return (
                   <div
                     key={dateStr}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      setDropTarget(cellKey);
-                    }}
+                    onDragOver={(e) => handleDragOver(e, cellKey)}
                     onDragLeave={() => setDropTarget(null)}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      handleDrop(inst.id, dateStr);
-                    }}
-                    className={`border-b border-r border-neutral-100 p-1 transition-colors ${
-                      isOver ? "bg-blue-50" : ""
+                    onDrop={(e) => handleDrop(e, inst.id, dateStr)}
+                    onClick={() => handleCellClick(inst.id, dateStr)}
+                    className={`group border-b border-r border-neutral-100 p-1 transition-colors cursor-pointer ${
+                      isOver
+                        ? "bg-blue-50 ring-2 ring-inset ring-blue-300"
+                        : "hover:bg-neutral-50"
                     }`}
-                    style={{ minHeight: "52px" }}
+                    style={{ minHeight: "56px" }}
                   >
                     {cellLessons.map((lesson) => (
                       <LessonBlock
                         key={lesson.id}
                         lesson={lesson}
-                        isDragging={draggedId === lesson.id}
-                        onDragStart={() => setDraggedId(lesson.id)}
-                        onClick={() => setSelectedLesson(lesson)}
+                        onDragStart={(e) => handleDragStart(e, lesson.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPanel({ type: "view", lesson });
+                        }}
                       />
                     ))}
+                    {cellLessons.length === 0 && (
+                      <div className="hidden group-hover:flex h-full items-center justify-center text-neutral-300 text-xs">
+                        + lesson
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -432,107 +486,241 @@ export function ScheduleView({ lessons, instructors }: Props) {
         </div>
       </div>
 
-      {/* ── Lesson detail panel ───────────────────────────────────── */}
-      {selectedLesson && (
+      {/* ── Side panel ────────────────────────────────────────────── */}
+      {panel && (
         <>
           <div
             className="fixed inset-0 z-40 bg-black/20"
-            onClick={() => setSelectedLesson(null)}
+            onClick={() => setPanel(null)}
           />
-          <div className="fixed right-0 top-0 z-50 flex h-full w-80 flex-col bg-white shadow-xl">
+          <div className="fixed right-0 top-0 z-50 flex h-full w-96 flex-col bg-white shadow-xl">
             <div className="flex items-center justify-between border-b border-neutral-200 px-5 py-4">
-              <h2 className="text-sm font-semibold text-neutral-800">Lesson</h2>
+              <h2 className="text-sm font-semibold text-neutral-800">
+                {panel.type === "add"
+                  ? `Add lesson — ${panel.date}`
+                  : "Lesson detail"}
+              </h2>
               <button
                 type="button"
-                onClick={() => setSelectedLesson(null)}
-                className="text-neutral-400 hover:text-neutral-600"
+                onClick={() => setPanel(null)}
+                className="rounded p-1 text-neutral-400 hover:text-neutral-600"
               >
                 ✕
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-              {/* Client */}
-              <div>
-                <p className="text-base font-semibold text-neutral-800">
-                  {selectedLesson.clientName}
-                </p>
-                <p className="text-xs text-neutral-500">{selectedLesson.brandCode}</p>
-              </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              {/* ── Add lesson form ── */}
+              {panel.type === "add" && (
+                <form onSubmit={handleAddLesson} className="space-y-4">
+                  <input type="hidden" name="date" value={panel.date} />
 
-              {/* Description */}
-              <div>
-                <p className="text-xs font-medium text-neutral-400">Description</p>
-                <p className="text-sm text-neutral-800">{selectedLesson.description}</p>
-              </div>
-
-              {/* Date / time / duration */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <p className="text-xs font-medium text-neutral-400">Date</p>
-                  <p className="text-sm text-neutral-800">{selectedLesson.date}</p>
-                </div>
-                {selectedLesson.startTime && (
                   <div>
-                    <p className="text-xs font-medium text-neutral-400">Time</p>
-                    <p className="text-sm text-neutral-800">{selectedLesson.startTime}</p>
+                    <label className="mb-1 block text-xs font-medium text-neutral-600">
+                      Booking
+                    </label>
+                    <select
+                      name="bookingId"
+                      required
+                      value={addBookingId}
+                      onChange={(e) => setAddBookingId(e.target.value)}
+                      className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+                    >
+                      <option value="">Select booking…</option>
+                      {bookings.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                )}
-                {selectedLesson.durationMin && (
-                  <div>
-                    <p className="text-xs font-medium text-neutral-400">Duration</p>
-                    <p className="text-sm text-neutral-800">
-                      {formatDuration(selectedLesson.durationMin)}
-                    </p>
-                  </div>
-                )}
-                <div>
-                  <p className="text-xs font-medium text-neutral-400">Price</p>
-                  <p className="text-sm tabular-nums text-neutral-800">
-                    CHF {selectedLesson.priceChf.toFixed(2)}
-                  </p>
-                </div>
-              </div>
 
-              {/* Instructor */}
-              <div>
-                <p className="text-xs font-medium text-neutral-400">Instructor</p>
-                {selectedLesson.instructorId ? (
-                  <div className="mt-0.5 flex items-center gap-1.5">
-                    <span
-                      className="inline-block h-2.5 w-2.5 rounded-full"
-                      style={{ backgroundColor: selectedLesson.instructorColor }}
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-neutral-600">
+                      Start time
+                    </label>
+                    <input
+                      type="time"
+                      name="startTime"
+                      defaultValue="09:00"
+                      className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
                     />
-                    <p className="text-sm text-neutral-800">
-                      {instructors.find(
-                        (i) => i.id === selectedLesson.instructorId
-                      )
-                        ? `${instructors.find((i) => i.id === selectedLesson.instructorId)!.firstName} ${instructors.find((i) => i.id === selectedLesson.instructorId)!.lastName}`
-                        : "Unknown"}
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-neutral-600">
+                      Duration
+                    </label>
+                    <select
+                      name="durationMin"
+                      className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+                    >
+                      <option value="">—</option>
+                      {DURATIONS.map((d) => (
+                        <option key={d.value} value={d.value}>
+                          {d.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-neutral-600">
+                      Description
+                    </label>
+                    <input
+                      name="description"
+                      required
+                      placeholder="e.g. 3hr private ski lesson"
+                      className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-neutral-600">
+                      Price CHF
+                    </label>
+                    <input
+                      type="number"
+                      name="priceChf"
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      required
+                      className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-neutral-600">
+                      Instructor
+                    </label>
+                    <select
+                      name="assignedInstructorId"
+                      defaultValue={panelDefaultInstructor}
+                      className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+                    >
+                      <option value="">— Unassigned —</option>
+                      {panelInstructors.map((i) => (
+                        <option key={i.id} value={i.id}>
+                          {i.firstName} {i.lastName} ({i.brandCode})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isPending}
+                    className="w-full rounded bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+                  >
+                    {isPending ? "Adding…" : "Add lesson"}
+                  </button>
+                </form>
+              )}
+
+              {/* ── View lesson ── */}
+              {panel.type === "view" && (
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-base font-semibold text-neutral-800">
+                      {panel.lesson.clientName}
+                    </p>
+                    <p className="text-xs text-neutral-500">
+                      {panel.lesson.brandCode}
                     </p>
                   </div>
-                ) : (
-                  <p className="text-sm text-neutral-400">Unassigned</p>
-                )}
-              </div>
 
-              {/* Links */}
-              <div className="flex flex-col gap-2 pt-2">
-                <Link
-                  href={`/bookings/${selectedLesson.bookingId}/line-items/${selectedLesson.id}/edit`}
-                  className="block w-full rounded border border-neutral-300 px-4 py-2 text-center text-sm text-neutral-600 hover:border-neutral-400"
-                  onClick={() => setSelectedLesson(null)}
-                >
-                  Edit lesson
-                </Link>
-                <Link
-                  href={`/bookings/${selectedLesson.bookingId}`}
-                  className="block w-full rounded border border-neutral-300 px-4 py-2 text-center text-sm text-neutral-600 hover:border-neutral-400"
-                  onClick={() => setSelectedLesson(null)}
-                >
-                  View booking →
-                </Link>
-              </div>
+                  <div>
+                    <p className="text-xs font-medium text-neutral-400">
+                      Description
+                    </p>
+                    <p className="text-sm text-neutral-800">
+                      {panel.lesson.description}
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-xs font-medium text-neutral-400">Date</p>
+                      <p className="text-sm text-neutral-800">
+                        {panel.lesson.date}
+                      </p>
+                    </div>
+                    {panel.lesson.startTime && (
+                      <div>
+                        <p className="text-xs font-medium text-neutral-400">
+                          Time
+                        </p>
+                        <p className="text-sm text-neutral-800">
+                          {panel.lesson.startTime}
+                        </p>
+                      </div>
+                    )}
+                    {panel.lesson.durationMin && (
+                      <div>
+                        <p className="text-xs font-medium text-neutral-400">
+                          Duration
+                        </p>
+                        <p className="text-sm text-neutral-800">
+                          {formatDuration(panel.lesson.durationMin)}
+                        </p>
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-xs font-medium text-neutral-400">Price</p>
+                      <p className="text-sm tabular-nums text-neutral-800">
+                        CHF {panel.lesson.priceChf.toFixed(2)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-medium text-neutral-400">
+                      Instructor
+                    </p>
+                    {panel.lesson.instructorId ? (
+                      <div className="mt-0.5 flex items-center gap-1.5">
+                        <span
+                          className="inline-block h-2.5 w-2.5 rounded-full"
+                          style={{
+                            backgroundColor: panel.lesson.instructorColor,
+                          }}
+                        />
+                        <p className="text-sm text-neutral-800">
+                          {(() => {
+                            const inst = instructors.find(
+                              (i) => i.id === panel.lesson.instructorId
+                            );
+                            return inst
+                              ? `${inst.firstName} ${inst.lastName}`
+                              : "Unknown";
+                          })()}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-neutral-400">Unassigned</p>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col gap-2 pt-2">
+                    <Link
+                      href={`/bookings/${panel.lesson.bookingId}/line-items/${panel.lesson.id}/edit`}
+                      className="block w-full rounded border border-neutral-300 px-4 py-2 text-center text-sm text-neutral-600 hover:border-neutral-400"
+                      onClick={() => setPanel(null)}
+                    >
+                      Edit lesson
+                    </Link>
+                    <Link
+                      href={`/bookings/${panel.lesson.bookingId}`}
+                      className="block w-full rounded border border-neutral-300 px-4 py-2 text-center text-sm text-neutral-600 hover:border-neutral-400"
+                      onClick={() => setPanel(null)}
+                    >
+                      View booking →
+                    </Link>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </>

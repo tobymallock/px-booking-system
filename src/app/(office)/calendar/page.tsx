@@ -10,7 +10,7 @@ const PALETTE = [
 ];
 
 export default async function CalendarPage() {
-  const [lineItems, instructors] = await Promise.all([
+  const [lineItems, instructors, bookings] = await Promise.all([
     prisma.bookingLineItem.findMany({
       include: {
         booking: {
@@ -24,6 +24,11 @@ export default async function CalendarPage() {
       where: { isActive: true },
       include: { brand: true },
       orderBy: [{ brand: { code: "asc" } }, { lastName: "asc" }, { firstName: "asc" }],
+    }),
+    prisma.booking.findMany({
+      where: { status: { not: "CANCELLED" } },
+      include: { client: true, brand: true },
+      orderBy: { createdAt: "desc" },
     }),
   ]);
 
@@ -61,10 +66,20 @@ export default async function CalendarPage() {
     color: PALETTE[i % PALETTE.length],
   }));
 
+  const bookingOptions = bookings.map((b) => ({
+    id: b.id,
+    label: `${b.client.lastName}, ${b.client.firstName} (${b.brand.code})`,
+    brandId: b.brandId,
+  }));
+
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Schedule</h1>
-      <ScheduleView lessons={lessons} instructors={instructorRows} />
+      <ScheduleView
+        lessons={lessons}
+        instructors={instructorRows}
+        bookings={bookingOptions}
+      />
     </div>
   );
 }
