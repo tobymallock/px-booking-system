@@ -155,6 +155,53 @@ export async function updateLineItem(formData: FormData) {
   redirect(`/bookings/${data.bookingId}`);
 }
 
+// Called from calendar multi-day drag-to-create
+export async function createLessonsForRange(formData: FormData) {
+  const bookingId = formData.get("bookingId") as string;
+  const startDate = formData.get("startDate") as string;
+  const endDate = formData.get("endDate") as string;
+  const startTimeStr = (formData.get("startTime") as string) || null;
+  const durationMin = formData.get("durationMin")
+    ? Number(formData.get("durationMin"))
+    : null;
+  const description = formData.get("description") as string;
+  const priceChf = Number(formData.get("priceChf"));
+  const assignedInstructorId =
+    (formData.get("assignedInstructorId") as string) || null;
+
+  // Generate every date in the range (inclusive)
+  const dates: Date[] = [];
+  const cur = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  while (cur <= end) {
+    dates.push(new Date(cur));
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+
+  const buildStartTime = (date: Date): Date | null => {
+    if (!startTimeStr) return null;
+    const [h, m] = startTimeStr.split(":").map(Number);
+    const t = new Date(date);
+    t.setUTCHours(h, m, 0, 0);
+    return t;
+  };
+
+  await prisma.bookingLineItem.createMany({
+    data: dates.map((date) => ({
+      bookingId,
+      date,
+      startTime: buildStartTime(date),
+      durationMin: durationMin ?? null,
+      description,
+      priceChf,
+      assignedInstructorId: assignedInstructorId ?? null,
+    })),
+  });
+
+  revalidatePath("/calendar");
+  revalidatePath("/bookings");
+}
+
 // Called from calendar drag & drop — takes typed args, not FormData
 export async function moveLineItem(
   id: string,
