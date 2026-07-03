@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { createBooking } from "../actions";
+import Link from "next/link";
 
 export default async function NewBookingPage() {
   const [clients, brands, partners] = await Promise.all([
@@ -118,12 +119,12 @@ export default async function NewBookingPage() {
           >
             Create booking
           </button>
-          <a
+          <Link
             href="/bookings"
             className="rounded border border-neutral-300 px-4 py-2 text-sm text-neutral-600 hover:border-neutral-400"
           >
             Cancel
-          </a>
+          </Link>
         </div>
       </form>
     </div>
